@@ -1,52 +1,152 @@
 import {
   useEffect,
-  useRef,
+  useMemo,
   useState,
 } from 'react';
 
 import {
-  Sun,
-  LayoutDashboard,
+  CalendarClock,
   Camera,
+  CheckCircle2,
+  Clock,
   History,
+  PanelTop,
+  Play,
+  RotateCcw,
   Settings,
-  Menu,
-  X,
-  LogOut,
-  Info,
+  Square,
+  Trash2,
+  Zap,
 } from 'lucide-react';
 
-import { Dashboard } from '@/components/Dashboard';
 import { CameraCapture } from '@/components/CameraCapture';
-import { InspectionHistory } from '@/components/InspectionHistory';
 import { InspectionDetails } from '@/components/InspectionDetails';
-import { ScheduleSettings } from '@/components/ScheduleSettings';
-import { NotificationStatus } from '@/components/NotificationStatus';
-import { AuthPage } from '@/components/AuthPage';
 
-import { useAuth } from '@/lib/authContext';
-import { isModelConnected } from '@/lib/modelAdapter';
-import { getSchedule } from '@/lib/inspectionApi';
+import type {
+  Inspection,
+} from '@/types';
 
 
 // ============================================================
 // TYPES
 // ============================================================
 
-type View =
-  | 'dashboard'
-  | 'capture'
-  | 'history'
-  | 'details'
-  | 'schedule'
-  | 'about';
+interface SolarPanel {
+  id: string;
+  name: string;
+  location?: string;
+}
 
 
 // ============================================================
-// DEFAULT PANEL
+// DEFAULT PANELS
 // ============================================================
 
-const DEFAULT_PANEL_ID = 'Panel-A1';
+const DEFAULT_PANELS: SolarPanel[] = [
+  {
+    id: 'SP-001',
+    name: 'Solar Panel 01',
+    location: 'Panel Array A',
+  },
+  {
+    id: 'SP-002',
+    name: 'Solar Panel 02',
+    location: 'Panel Array A',
+  },
+  {
+    id: 'SP-003',
+    name: 'Solar Panel 03',
+    location: 'Panel Array B',
+  },
+];
+
+
+// ============================================================
+// STORAGE KEYS
+// ============================================================
+
+const HISTORY_STORAGE_KEY =
+  'solarai-inspection-history';
+
+const SCHEDULE_STORAGE_KEY =
+  'solarai-inspection-schedule';
+
+
+// ============================================================
+// HELPERS
+// ============================================================
+
+function loadHistory(): Inspection[] {
+
+  try {
+
+    const stored =
+      localStorage.getItem(
+        HISTORY_STORAGE_KEY
+      );
+
+    if (!stored) {
+      return [];
+    }
+
+    const parsed =
+      JSON.parse(stored);
+
+    return Array.isArray(parsed)
+      ? parsed
+      : [];
+
+  } catch (error) {
+
+    console.error(
+      'Failed to load inspection history:',
+      error
+    );
+
+    return [];
+
+  }
+}
+
+
+function saveHistory(
+  history: Inspection[]
+) {
+
+  try {
+
+    localStorage.setItem(
+      HISTORY_STORAGE_KEY,
+      JSON.stringify(history)
+    );
+
+  } catch (error) {
+
+    console.error(
+      'Failed to save inspection history:',
+      error
+    );
+
+  }
+}
+
+
+function getCurrentTime(): string {
+
+  const now =
+    new Date();
+
+  return [
+    String(
+      now.getHours()
+    ).padStart(2, '0'),
+
+    String(
+      now.getMinutes()
+    ).padStart(2, '0'),
+  ].join(':');
+
+}
 
 
 // ============================================================
@@ -55,912 +155,696 @@ const DEFAULT_PANEL_ID = 'Panel-A1';
 
 export default function App() {
 
-  const {
-    user,
-    loading,
-    signOut,
-  } = useAuth();
-
-
-  // ------------------------------------------------------------
-  // CURRENT PAGE
-  // ------------------------------------------------------------
+  // ==========================================================
+  // PANELS
+  // ==========================================================
 
   const [
-    view,
-    setView,
-  ] = useState<View>('dashboard');
+    panels,
+    setPanels,
+  ] = useState<SolarPanel[]>(
+    DEFAULT_PANELS
+  );
 
-
-  // ------------------------------------------------------------
-  // SELECTED INSPECTION
-  // ------------------------------------------------------------
 
   const [
-    selectedInspectionId,
-    setSelectedInspectionId,
-  ] = useState<string | null>(null);
+    selectedPanelId,
+    setSelectedPanelId,
+  ] = useState(
+    DEFAULT_PANELS[0].id
+  );
 
 
-  // ------------------------------------------------------------
-  // REFRESH KEY
-  // ------------------------------------------------------------
-
-  const [
-    refreshKey,
-    setRefreshKey,
-  ] = useState(0);
-
-
-  // ------------------------------------------------------------
-  // MOBILE MENU
-  // ------------------------------------------------------------
-
-  const [
-    mobileNavOpen,
-    setMobileNavOpen,
-  ] = useState(false);
+  const selectedPanel =
+    useMemo(
+      () =>
+        panels.find(
+          panel =>
+            panel.id ===
+            selectedPanelId
+        ) ??
+        panels[0],
+      [
+        panels,
+        selectedPanelId,
+      ]
+    );
 
 
-  // ------------------------------------------------------------
-  // PANEL
-  // ------------------------------------------------------------
+  // ==========================================================
+  // INSPECTION
+  // ==========================================================
 
   const [
-    panelId,
-  ] = useState(DEFAULT_PANEL_ID);
+    currentInspection,
+    setCurrentInspection,
+  ] = useState<Inspection | null>(
+    null
+  );
 
 
-  // ------------------------------------------------------------
-  // SCHEDULED CAPTURE
-  //
-  // false:
-  // Camera can be opened normally.
-  // No automatic capture.
-  //
-  // true:
-  // Schedule has reached its configured time.
-  // CameraCapture starts automatic capture.
-  // ------------------------------------------------------------
+  const [
+    inspectionHistory,
+    setInspectionHistory,
+  ] = useState<Inspection[]>(
+    () => loadHistory()
+  );
 
+
+  // ==========================================================
+  // SCHEDULE
+  // ==========================================================
+
+  const [
+    inspectionTime,
+    setInspectionTime,
+  ] = useState(
+    '10:30'
+  );
+
+
+  const [
+    scheduleEnabled,
+    setScheduleEnabled,
+  ] = useState(
+    false
+  );
+
+
+  /*
+   * This is the important state passed to
+   * CameraCapture.tsx.
+   *
+   * false = normal camera mode
+   *
+   * true = scheduled capture should happen
+   */
   const [
     scheduledCapture,
     setScheduledCapture,
-  ] = useState(false);
+  ] = useState(
+    false
+  );
 
 
-  // ------------------------------------------------------------
-  // PREVENT MULTIPLE SCHEDULE CHECKS
-  // ------------------------------------------------------------
-
-  const scheduledInspectionRunning =
-    useRef(false);
-
-
-  // ------------------------------------------------------------
-  // LAST SCHEDULE RUN
-  //
-  // Used so that the same schedule cannot
-  // start repeatedly during the same day.
-  // ------------------------------------------------------------
-
-  const lastScheduledRun =
-    useRef<string | null>(null);
-
-
-  // ------------------------------------------------------------
-  // MODEL STATUS
-  // ------------------------------------------------------------
-
-  const modelConnected =
-    isModelConnected();
+  /*
+   * Prevent the same scheduled minute from
+   * triggering repeatedly.
+   *
+   * Example:
+   *
+   * 10:30:00
+   * 10:30:01
+   * 10:30:02
+   *
+   * should NOT create three inspections.
+   */
+  const [
+    lastTriggeredDate,
+    setLastTriggeredDate,
+  ] = useState<
+    string | null
+  >(null);
 
 
-  // ============================================================
-  // INSPECTION COMPLETE
-  // ============================================================
+  // ==========================================================
+  // UI STATE
+  // ==========================================================
 
-  const handleInspectionComplete = () => {
+  const [
+    activeTab,
+    setActiveTab,
+  ] = useState<
+    'inspect' | 'history'
+  >(
+    'inspect'
+  );
 
-    setRefreshKey(
-      (key) => key + 1
-    );
 
-  };
+  const [
+    showScheduleSettings,
+    setShowScheduleSettings,
+  ] = useState(
+    false
+  );
 
 
-  // ============================================================
-  // SCHEDULE CHECKER
-  // ============================================================
+  // ==========================================================
+  // LOAD SAVED SCHEDULE
+  // ==========================================================
 
   useEffect(() => {
 
-    if (!user) {
+    try {
+
+      const stored =
+        localStorage.getItem(
+          SCHEDULE_STORAGE_KEY
+        );
+
+      if (!stored) {
+        return;
+      }
+
+      const schedule =
+        JSON.parse(stored);
+
+      if (
+        typeof schedule?.time ===
+        'string'
+      ) {
+
+        setInspectionTime(
+          schedule.time
+        );
+
+      }
+
+      if (
+        typeof schedule?.enabled ===
+        'boolean'
+      ) {
+
+        setScheduleEnabled(
+          schedule.enabled
+        );
+
+      }
+
+    } catch (error) {
+
+      console.error(
+        'Failed to load schedule:',
+        error
+      );
+
+    }
+
+  }, []);
+
+
+  // ==========================================================
+  // SAVE SCHEDULE
+  // ==========================================================
+
+  useEffect(() => {
+
+    try {
+
+      localStorage.setItem(
+        SCHEDULE_STORAGE_KEY,
+        JSON.stringify({
+          time:
+            inspectionTime,
+
+          enabled:
+            scheduleEnabled,
+        })
+      );
+
+    } catch (error) {
+
+      console.error(
+        'Failed to save schedule:',
+        error
+      );
+
+    }
+
+  }, [
+    inspectionTime,
+    scheduleEnabled,
+  ]);
+
+
+  // ==========================================================
+  // SCHEDULE CHECKER
+  // ==========================================================
+
+  useEffect(() => {
+
+    /*
+     * Don't run the scheduler when disabled.
+     */
+    if (
+      !scheduleEnabled
+    ) {
+
       return;
+
     }
 
 
-    let cancelled = false;
+    /*
+     * Check immediately when schedule is enabled.
+     */
+    const checkSchedule =
+      () => {
+
+        const now =
+          new Date();
 
 
-    // ----------------------------------------------------------
-    // CHECK SCHEDULE
-    // ----------------------------------------------------------
+        const currentHour =
+          String(
+            now.getHours()
+          ).padStart(
+            2,
+            '0'
+          );
 
-    async function checkSchedule() {
 
-      if (
-        cancelled ||
-        scheduledInspectionRunning.current
-      ) {
+        const currentMinute =
+          String(
+            now.getMinutes()
+          ).padStart(
+            2,
+            '0'
+          );
+
+
+        const currentTime =
+          `${currentHour}:${currentMinute}`;
+
+
+        /*
+         * Unique key for today's scheduled minute.
+         *
+         * Example:
+         *
+         * 2026-08-29-10:30
+         */
+        const todayKey =
+          `${now
+            .toISOString()
+            .slice(0, 10)}-${currentTime}`;
+
+
+        /*
+         * Schedule matches current time.
+         */
+        if (
+          currentTime ===
+          inspectionTime
+        ) {
+
+          /*
+           * Don't trigger repeatedly during
+           * the same minute.
+           */
+          if (
+            lastTriggeredDate ===
+            todayKey
+          ) {
+
+            return;
+
+          }
+
+
+          console.log(
+            '[Schedule] Scheduled inspection triggered:',
+            currentTime
+          );
+
+
+          setLastTriggeredDate(
+            todayKey
+          );
+
+
+          /*
+           * This activates CameraCapture.tsx.
+           */
+          setScheduledCapture(
+            true
+          );
+
+        }
+
+      };
+
+
+    checkSchedule();
+
+
+    /*
+     * Check every second.
+     *
+     * This allows the user to set a precise
+     * minute without requiring the page to
+     * be refreshed.
+     */
+    const interval =
+      window.setInterval(
+        checkSchedule,
+        1000
+      );
+
+
+    return () => {
+
+      window.clearInterval(
+        interval
+      );
+
+    };
+
+  }, [
+    scheduleEnabled,
+    inspectionTime,
+    lastTriggeredDate,
+  ]);
+
+
+  // ==========================================================
+  // INSPECTION COMPLETE
+  // ==========================================================
+
+  const handleInspectionComplete =
+    (
+      inspection: Inspection
+    ) => {
+
+      console.log(
+        '[App] Inspection completed:',
+        inspection
+      );
+
+
+      /*
+       * Show latest inspection.
+       */
+      setCurrentInspection(
+        inspection
+      );
+
+
+      /*
+       * Add newest inspection
+       * to history.
+       */
+      setInspectionHistory(
+        previous => {
+
+          const updated = [
+            inspection,
+            ...previous,
+          ];
+
+          /*
+           * Keep the latest 100 records.
+           */
+          const limited =
+            updated.slice(
+              0,
+              100
+            );
+
+
+          saveHistory(
+            limited
+          );
+
+
+          return limited;
+
+        }
+      );
+
+
+      /*
+       * IMPORTANT:
+       *
+       * This turns scheduledCapture back
+       * OFF after the scheduled inspection.
+       *
+       * The next scheduled time will turn it
+       * ON again.
+       */
+      setScheduledCapture(
+        false
+      );
+
+
+      /*
+       * Open the inspection result.
+       */
+      setActiveTab(
+        'inspect'
+      );
+
+    };
+
+
+  // ==========================================================
+  // ENABLE SCHEDULE
+  // ==========================================================
+
+  const enableSchedule =
+    () => {
+
+      setLastTriggeredDate(
+        null
+      );
+
+      setScheduleEnabled(
+        true
+      );
+
+    };
+
+
+  // ==========================================================
+  // DISABLE SCHEDULE
+  // ==========================================================
+
+  const disableSchedule =
+    () => {
+
+      /*
+       * Stop future automatic captures.
+       */
+      setScheduleEnabled(
+        false
+      );
+
+
+      /*
+       * Cancel any pending scheduled capture.
+       */
+      setScheduledCapture(
+        false
+      );
+
+
+      setLastTriggeredDate(
+        null
+      );
+
+    };
+
+
+  // ==========================================================
+  // MANUAL TRIGGER FOR TESTING
+  // ==========================================================
+
+  const triggerScheduledInspectionNow =
+    () => {
+
+      console.log(
+        '[App] Manual scheduled-capture test.'
+      );
+
+
+      /*
+       * This is useful for testing without
+       * waiting until 10:30.
+       */
+      setScheduledCapture(
+        true
+      );
+
+    };
+
+
+  // ==========================================================
+  // CLEAR HISTORY
+  // ==========================================================
+
+  const clearHistory =
+    () => {
+
+      const confirmed =
+        window.confirm(
+          'Delete all inspection history?'
+        );
+
+
+      if (!confirmed) {
 
         return;
 
       }
 
 
-      try {
-
-        // ------------------------------------------------------
-        // GET CURRENT SCHEDULE
-        // ------------------------------------------------------
-
-        const schedule =
-          await getSchedule(panelId);
-
-
-        // ------------------------------------------------------
-        // NO ACTIVE SCHEDULE
-        // ------------------------------------------------------
-
-        if (
-          !schedule ||
-          !schedule.is_active ||
-          !schedule.days_of_week ||
-          schedule.days_of_week.length === 0
-        ) {
-
-          return;
-
-        }
-
-
-        // ------------------------------------------------------
-        // CURRENT DATE/TIME
-        // ------------------------------------------------------
-
-        const now =
-          new Date();
-
-
-        // ------------------------------------------------------
-        // READ SCHEDULED TIME
-        //
-        // Database format:
-        //
-        // HH:MM
-        //
-        // Example:
-        //
-        // 19:30
-        // ------------------------------------------------------
-
-        const timeParts =
-          schedule.inspection_time
-            .split(':')
-            .map(Number);
-
-
-        const scheduledHour =
-          timeParts[0];
-
-
-        const scheduledMinute =
-          timeParts[1];
-
-
-        // ------------------------------------------------------
-        // VALIDATE TIME
-        // ------------------------------------------------------
-
-        if (
-          !Number.isInteger(
-            scheduledHour
-          ) ||
-          !Number.isInteger(
-            scheduledMinute
-          ) ||
-          scheduledHour < 0 ||
-          scheduledHour > 23 ||
-          scheduledMinute < 0 ||
-          scheduledMinute > 59
-        ) {
-
-          console.warn(
-            '[Schedule] Invalid inspection time:',
-            schedule.inspection_time
-          );
-
-          return;
-
-        }
-
-
-        // ------------------------------------------------------
-        // CURRENT DAY
-        //
-        // JavaScript:
-        //
-        // Sunday    = 0
-        // Monday    = 1
-        // Tuesday   = 2
-        // Wednesday = 3
-        // Thursday  = 4
-        // Friday    = 5
-        // Saturday  = 6
-        // ------------------------------------------------------
-
-        const today =
-          now.getDay();
-
-
-        // ------------------------------------------------------
-        // CHECK SELECTED DAY
-        // ------------------------------------------------------
-
-        const isScheduledDay =
-          schedule.days_of_week.includes(
-            today
-          );
-
-
-        if (!isScheduledDay) {
-
-          return;
-
-        }
-
-
-        // ------------------------------------------------------
-        // CURRENT HOUR/MINUTE
-        // ------------------------------------------------------
-
-        const currentHour =
-          now.getHours();
-
-
-        const currentMinute =
-          now.getMinutes();
-
-
-        const currentSecond =
-          now.getSeconds();
-
-
-        // ------------------------------------------------------
-        // DEBUG INFORMATION
-        // ------------------------------------------------------
-
-        console.log(
-          '[Schedule]',
-          {
-            today,
-            currentTime:
-              `${String(currentHour).padStart(2, '0')}:${String(currentMinute).padStart(2, '0')}:${String(currentSecond).padStart(2, '0')}`,
-            scheduledTime:
-              schedule.inspection_time,
-            isScheduledDay,
-          }
-        );
-
-
-        // ======================================================
-        // IMPORTANT SCHEDULE CHECK
-        // ======================================================
-        //
-        // We DO NOT use:
-        //
-        // currentTime >= scheduledTime
-        //
-        // because that would cause:
-        //
-        // 7:00 PM schedule
-        // 8:00 PM current time
-        //
-        // to still be considered due.
-        //
-        // Instead, the hour and minute must match.
-        //
-        // Example:
-        //
-        // Schedule = 19:30
-        //
-        // 19:29 -> FALSE
-        // 19:30 -> TRUE
-        // 19:31 -> FALSE
-        // 20:00 -> FALSE
-        //
-        // The seconds are intentionally not included.
-        // This gives us the complete scheduled minute.
-        // ======================================================
-
-        const isCorrectHour =
-          currentHour ===
-          scheduledHour;
-
-
-        const isCorrectMinute =
-          currentMinute ===
-          scheduledMinute;
-
-
-        const isDue =
-          isScheduledDay &&
-          isCorrectHour &&
-          isCorrectMinute;
-
-
-        if (!isDue) {
-
-          return;
-
-        }
-
-
-        // ------------------------------------------------------
-        // UNIQUE DAILY RUN KEY
-        // ------------------------------------------------------
-
-        const runKey =
-          `${schedule.id}-${now.toDateString()}-${schedule.inspection_time}`;
-
-
-        // ------------------------------------------------------
-        // PREVENT DUPLICATE RUN
-        // ------------------------------------------------------
-
-        if (
-          lastScheduledRun.current ===
-          runKey
-        ) {
-
-          console.log(
-            '[Schedule] Already triggered today:',
-            runKey
-          );
-
-          return;
-
-        }
-
-
-        // ------------------------------------------------------
-        // LOCK SCHEDULE
-        // ------------------------------------------------------
-
-        scheduledInspectionRunning.current =
-          true;
-
-
-        // ------------------------------------------------------
-        // MARK THIS SCHEDULE AS RUN
-        // ------------------------------------------------------
-
-        lastScheduledRun.current =
-          runKey;
-
-
-        // ------------------------------------------------------
-        // LOG
-        // ------------------------------------------------------
-
-        console.log(
-          '========================================'
-        );
-
-        console.log(
-          'SCHEDULED INSPECTION STARTING'
-        );
-
-        console.log(
-          'Panel:',
-          schedule.panel_id
-        );
-
-        console.log(
-          'Camera:',
-          schedule.camera_device
-        );
-
-        console.log(
-          'Scheduled time:',
-          schedule.inspection_time
-        );
-
-        console.log(
-          'Actual time:',
-          now.toLocaleTimeString()
-        );
-
-        console.log(
-          '========================================'
-        );
-
-
-        // ------------------------------------------------------
-        // GO TO CAMERA PAGE
-        // ------------------------------------------------------
-
-        setView(
-          'capture'
-        );
-
-
-        // ------------------------------------------------------
-        // START SCHEDULED CAPTURE
-        //
-        // IMPORTANT:
-        //
-        // App.tsx does NOT capture the image itself.
-        //
-        // It only tells CameraCapture:
-        //
-        // "The scheduled time has arrived."
-        //
-        // CameraCapture.tsx is responsible for:
-        //
-        // Camera
-        // ↓
-        // Capture
-        // ↓
-        // AI inspection
-        // ↓
-        // Wait 5 seconds
-        // ↓
-        // Capture
-        // ↓
-        // ...
-        // ------------------------------------------------------
-
-        setScheduledCapture(
-          true
-        );
-
-
-      } catch (error) {
-
-        console.error(
-          '[Schedule] Schedule check failed:',
-          error
-        );
-
-      } finally {
-
-        scheduledInspectionRunning.current =
-          false;
-
-      }
-
-    }
-
-
-    // ==========================================================
-    // CHECK IMMEDIATELY
-    // ==========================================================
-
-    checkSchedule();
-
-
-    // ==========================================================
-    // CHECK EVERY 5 SECONDS
-    // ==========================================================
-
-    const timer =
-      window.setInterval(
-        checkSchedule,
-        5_000
+      setInspectionHistory(
+        []
       );
 
 
-    // ==========================================================
-    // CLEANUP
-    // ==========================================================
+      setCurrentInspection(
+        null
+      );
 
-    return () => {
 
-      cancelled = true;
-
-      window.clearInterval(
-        timer
+      localStorage.removeItem(
+        HISTORY_STORAGE_KEY
       );
 
     };
 
-  }, [
-    panelId,
-    user,
-  ]);
+
+  // ==========================================================
+  // DELETE ONE INSPECTION
+  // ==========================================================
+
+  const deleteInspection =
+    (
+      index: number
+    ) => {
+
+      setInspectionHistory(
+        previous => {
+
+          const updated =
+            previous.filter(
+              (_, i) =>
+                i !== index
+            );
 
 
-  // ============================================================
-  // SELECT INSPECTION
-  // ============================================================
-
-  const handleSelectInspection = (
-    id: string
-  ) => {
-
-    setSelectedInspectionId(
-      id
-    );
-
-    setView(
-      'details'
-    );
-
-    setMobileNavOpen(
-      false
-    );
-
-  };
+          saveHistory(
+            updated
+          );
 
 
-  // ============================================================
-  // NAVIGATION
-  // ============================================================
+          return updated;
 
-  const navigate = (
-    nextView: View
-  ) => {
+        }
+      );
 
-    /*
-     * If the user manually leaves
-     * the camera page, stop the
-     * scheduled capture signal.
-     */
+    };
 
-    if (
-      nextView !== 'capture'
-    ) {
 
+  // ==========================================================
+  // PANEL CHANGE
+  // ==========================================================
+
+  const handlePanelChange =
+    (
+      event: React.ChangeEvent<HTMLSelectElement>
+    ) => {
+
+      setSelectedPanelId(
+        event.target.value
+      );
+
+
+      /*
+       * Clear previous result when
+       * changing to another panel.
+       */
+      setCurrentInspection(
+        null
+      );
+
+
+      /*
+       * A scheduled capture should not
+       * accidentally run against a panel
+       * after the user changes selection.
+       */
       setScheduledCapture(
         false
       );
 
-    }
+    };
 
 
-    setView(
-      nextView
-    );
+  // ==========================================================
+  // SCHEDULE STATUS
+  // ==========================================================
 
-    setMobileNavOpen(
-      false
-    );
-
-  };
-
-
-  // ============================================================
-  // LOADING
-  // ============================================================
-
-  if (loading) {
-
-    return (
-
-      <div className="min-h-screen bg-ink-50 flex items-center justify-center">
-
-        <Sun
-          size={24}
-          className="text-ink-300 animate-pulse"
-        />
-
-      </div>
-
-    );
-
-  }
+  const scheduleStatus =
+    scheduleEnabled
+      ? `Automatic inspection scheduled for ${inspectionTime}`
+      : 'Automatic inspection is disabled';
 
 
-  // ============================================================
-  // AUTHENTICATION
-  // ============================================================
-
-  if (!user) {
-
-    return <AuthPage />;
-
-  }
-
-
-  // ============================================================
-  // NAVIGATION ITEMS
-  // ============================================================
-
-  const navItems = [
-
-    {
-      id: 'dashboard' as View,
-      label: 'Dashboard',
-      icon: LayoutDashboard,
-    },
-
-    {
-      id: 'capture' as View,
-      label: 'New Inspection',
-      icon: Camera,
-    },
-
-    {
-      id: 'history' as View,
-      label: 'History',
-      icon: History,
-    },
-
-    {
-      id: 'schedule' as View,
-      label: 'Schedule',
-      icon: Settings,
-    },
-
-    {
-      id: 'about' as View,
-      label: 'About',
-      icon: Info,
-    },
-
-  ];
-
-
-  // ============================================================
-  // APPLICATION UI
-  // ============================================================
+  // ==========================================================
+  // RENDER
+  // ==========================================================
 
   return (
 
     <div className="min-h-screen bg-ink-50 text-ink-900">
 
-
       {/* ======================================================
           HEADER
           ====================================================== */}
 
-      <header className="bg-white/80 backdrop-blur-lg border-b border-ink-200/60 sticky top-0 z-30">
+      <header className="border-b border-ink-200 bg-white">
 
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="max-w-7xl mx-auto px-6 py-4">
 
-          <div className="flex items-center justify-between h-16">
+          <div className="flex items-center justify-between gap-4">
 
+            {/* Logo / title */}
 
-            {/* LOGO */}
+            <div className="flex items-center gap-3">
 
-            <button
-              onClick={() =>
-                navigate('dashboard')
-              }
-              className="flex items-center gap-2.5 group"
-            >
+              <div className="w-10 h-10 rounded-xl bg-ink-900 flex items-center justify-center">
 
-              <div className="w-9 h-9 bg-ink-900 rounded-lg flex items-center justify-center transition-transform group-hover:scale-105">
-
-                <Sun
-                  size={18}
-                  className="text-amber-400"
+                <Zap
+                  size={20}
+                  className="text-white"
                 />
 
               </div>
 
 
-              <div className="hidden sm:block">
+              <div>
 
-                <h1 className="text-sm font-semibold tracking-tight leading-none">
+                <h1 className="text-lg font-semibold">
 
-                  SolarGuard
+                  SolarAI
 
                 </h1>
 
 
-                <p className="text-[11px] text-ink-400 leading-none mt-0.5">
+                <p className="text-xs text-ink-400">
 
-                  Fault Detection System
+                  Intelligent Solar Panel Inspection
 
                 </p>
 
               </div>
 
-            </button>
+            </div>
 
 
-            {/* DESKTOP NAV */}
+            {/* Status */}
 
-            <nav className="hidden md:flex items-center gap-1">
+            <div className="hidden sm:flex items-center gap-2 text-xs text-ink-500">
 
-              {navItems.map(
-                (item) => {
+              <span className="w-2 h-2 rounded-full bg-green-500" />
 
-                  const Icon =
-                    item.icon;
-
-
-                  const active =
-                    view === item.id ||
-                    (
-                      item.id === 'history' &&
-                      view === 'details'
-                    );
-
-
-                  return (
-
-                    <button
-                      key={item.id}
-                      onClick={() =>
-                        navigate(
-                          item.id
-                        )
-                      }
-                      className={`flex items-center gap-2 px-3.5 py-2 text-sm font-medium rounded-lg transition-all ${
-                        active
-                          ? 'bg-ink-900 text-white'
-                          : 'text-ink-500 hover:text-ink-900 hover:bg-ink-100'
-                      }`}
-                    >
-
-                      <Icon
-                        size={15}
-                      />
-
-                      {item.label}
-
-                    </button>
-
-                  );
-
-                }
-              )}
-
-            </nav>
-
-
-            {/* RIGHT SIDE */}
-
-            <div className="flex items-center gap-3">
-
-              <div className="hidden lg:flex items-center gap-2 text-xs text-ink-400">
-
-                <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
-
-                <span>
-                  {user.email}
-                </span>
-
-              </div>
-
-
-              <button
-                onClick={
-                  signOut
-                }
-                className="hidden md:flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-ink-400 hover:text-ink-900 rounded-lg transition-colors"
-              >
-
-                <LogOut
-                  size={15}
-                />
-
-                <span className="hidden lg:inline">
-
-                  Sign Out
-
-                </span>
-
-              </button>
-
-
-              {/* MOBILE MENU */}
-
-              <button
-                onClick={() =>
-                  setMobileNavOpen(
-                    !mobileNavOpen
-                  )
-                }
-                className="md:hidden p-2 text-ink-600"
-              >
-
-                {mobileNavOpen ? (
-
-                  <X
-                    size={20}
-                  />
-
-                ) : (
-
-                  <Menu
-                    size={20}
-                  />
-
-                )}
-
-              </button>
+              MobileNetV3 Inspection System
 
             </div>
 
           </div>
-
-
-          {/* ==================================================
-              MOBILE NAV
-              ================================================== */}
-
-          {mobileNavOpen && (
-
-            <nav className="md:hidden pb-3 space-y-1 animate-fade-in">
-
-              {navItems.map(
-                (item) => {
-
-                  const Icon =
-                    item.icon;
-
-
-                  const active =
-                    view === item.id ||
-                    (
-                      item.id === 'history' &&
-                      view === 'details'
-                    );
-
-
-                  return (
-
-                    <button
-                      key={item.id}
-                      onClick={() =>
-                        navigate(
-                          item.id
-                        )
-                      }
-                      className={`w-full flex items-center gap-2.5 px-3 py-2.5 text-sm font-medium rounded-lg ${
-                        active
-                          ? 'bg-ink-900 text-white'
-                          : 'text-ink-600 hover:bg-ink-100'
-                      }`}
-                    >
-
-                      <Icon
-                        size={16}
-                      />
-
-                      {item.label}
-
-                    </button>
-
-                  );
-
-                }
-              )}
-
-
-              <button
-                onClick={
-                  signOut
-                }
-                className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm font-medium text-ink-400 hover:bg-ink-100 rounded-lg"
-              >
-
-                <LogOut
-                  size={16}
-                />
-
-                Sign Out
-
-              </button>
-
-            </nav>
-
-          )}
 
         </div>
 
@@ -968,134 +852,370 @@ export default function App() {
 
 
       {/* ======================================================
-          MODEL STATUS
+          MAIN
           ====================================================== */}
 
-      {!modelConnected &&
-        view !== 'about' && (
+      <main className="max-w-7xl mx-auto px-6 py-8">
 
-          <div className="bg-amber-50/80 backdrop-blur border-b border-amber-200/60 px-4 py-2.5">
+        {/* ====================================================
+            PANEL + SCHEDULE BAR
+            ==================================================== */}
 
-            <div className="max-w-7xl mx-auto flex items-center gap-2 text-xs text-amber-800">
+        <section className="bg-white border border-ink-200/60 rounded-2xl p-5 mb-6">
 
-              <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
 
-              <span>
+            {/* Panel selection */}
 
-                AI model not connected.
-                Set{' '}
+            <div>
 
-                <code className="px-1.5 py-0.5 bg-amber-100 rounded font-mono">
+              <label className="block text-xs font-medium text-ink-500 mb-2">
 
-                  VITE_MODEL_INFERENCE_URL
+                Solar Panel
 
-                </code>
+              </label>
 
-                {' '}
 
-                to enable predictions.
+              <div className="relative">
 
-              </span>
+                <PanelTop
+                  size={16}
+                  className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-400"
+                />
+
+
+                <select
+                  value={
+                    selectedPanelId
+                  }
+                  onChange={
+                    handlePanelChange
+                  }
+                  className="w-full pl-9 pr-4 py-3 border border-ink-200 rounded-xl bg-white text-sm outline-none focus:border-ink-900"
+                >
+
+                  {panels.map(
+                    panel => (
+
+                      <option
+                        key={
+                          panel.id
+                        }
+                        value={
+                          panel.id
+                        }
+                      >
+
+                        {panel.id}
+                        {' — '}
+                        {panel.name}
+
+                      </option>
+
+                    )
+                  )}
+
+                </select>
+
+              </div>
+
+            </div>
+
+
+            {/* Schedule time */}
+
+            <div>
+
+              <label className="block text-xs font-medium text-ink-500 mb-2">
+
+                Automatic Inspection Time
+
+              </label>
+
+
+              <div className="flex gap-2">
+
+                <div className="relative flex-1">
+
+                  <Clock
+                    size={16}
+                    className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-400"
+                  />
+
+
+                  <input
+                    type="time"
+                    value={
+                      inspectionTime
+                    }
+                    onChange={
+                      event =>
+                        setInspectionTime(
+                          event.target.value
+                        )
+                    }
+                    className="w-full pl-9 pr-3 py-3 border border-ink-200 rounded-xl text-sm outline-none focus:border-ink-900"
+                  />
+
+                </div>
+
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    setShowScheduleSettings(
+                      value =>
+                        !value
+                    )
+                  }
+                  className="px-3 border border-ink-200 rounded-xl hover:bg-ink-50"
+                  title="Schedule settings"
+                >
+
+                  <Settings
+                    size={16}
+                  />
+
+                </button>
+
+              </div>
+
+            </div>
+
+
+            {/* Schedule control */}
+
+            <div>
+
+              <label className="block text-xs font-medium text-ink-500 mb-2">
+
+                Automatic Capture
+
+              </label>
+
+
+              {scheduleEnabled ? (
+
+                <button
+                  type="button"
+                  onClick={
+                    disableSchedule
+                  }
+                  className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-red-50 text-red-700 border border-red-200 rounded-xl text-sm font-medium hover:bg-red-100"
+                >
+
+                  <Square
+                    size={15}
+                  />
+
+                  Stop Schedule
+
+                </button>
+
+              ) : (
+
+                <button
+                  type="button"
+                  onClick={
+                    enableSchedule
+                  }
+                  className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-ink-900 text-white rounded-xl text-sm font-medium hover:bg-ink-800"
+                >
+
+                  <Play
+                    size={15}
+                  />
+
+                  Start Schedule
+
+                </button>
+
+              )}
 
             </div>
 
           </div>
 
-        )}
+
+          {/* Schedule information */}
+
+          <div className="mt-4 pt-4 border-t border-ink-100 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs">
+
+            <div className="flex items-center gap-2 text-ink-500">
+
+              <CalendarClock
+                size={14}
+              />
+
+              {scheduleStatus}
+
+            </div>
 
 
-      {/* ======================================================
-          SCHEDULE STATUS
-          ====================================================== */}
+            {scheduledCapture && (
 
-      {scheduledCapture && (
+              <div className="flex items-center gap-2 text-green-700 font-medium">
 
-        <div className="bg-green-50 border-b border-green-200 px-4 py-2.5">
+                <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
 
-          <div className="max-w-7xl mx-auto flex items-center gap-2 text-xs text-green-800">
+                Scheduled capture is active
 
-            <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+              </div>
 
-            <span className="font-medium">
-
-              Scheduled inspection is active.
-              Camera will capture an image every 5 seconds.
-
-            </span>
+            )}
 
           </div>
 
-        </div>
 
-      )}
+          {/* Testing controls */}
 
+          {showScheduleSettings && (
 
-      {/* ======================================================
-          MAIN CONTENT
-          ====================================================== */}
+            <div className="mt-4 pt-4 border-t border-ink-100">
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+              <p className="text-xs text-ink-400 mb-3">
 
-        <div
-          key={view}
-          className="animate-fade-in"
-        >
+                Testing
+
+              </p>
 
 
-          {/* ==================================================
-              DASHBOARD
-              ================================================== */}
-
-          {view === 'dashboard' && (
-
-            <div className="space-y-8">
-
-              <PageHeader
-                title="Dashboard"
-                subtitle="Real-time overview of your solar panel monitoring system."
-              />
-
-              <NotificationStatus />
-
-              <Dashboard
-                panelId={
-                  panelId
+              <button
+                type="button"
+                onClick={
+                  triggerScheduledInspectionNow
                 }
-                onSelectInspection={
-                  handleSelectInspection
-                }
-                refreshKey={
-                  refreshKey
-                }
-              />
+                className="flex items-center gap-2 px-4 py-2.5 border border-ink-200 rounded-xl text-sm text-ink-700 hover:bg-ink-50"
+              >
+
+                <Camera
+                  size={15}
+                />
+
+                Test Automatic Capture Now
+
+              </button>
+
+
+              <p className="text-xs text-ink-400 mt-2">
+
+                This triggers the same automatic
+                capture flow without waiting for
+                the scheduled time.
+
+              </p>
 
             </div>
 
           )}
 
+        </section>
 
-          {/* ==================================================
-              CAMERA
-              ================================================== */}
 
-          {view === 'capture' && (
+        {/* ====================================================
+            TABS
+            ==================================================== */}
 
-            <div className="space-y-8">
+        <div className="flex items-center gap-1 p-1 bg-ink-100 rounded-xl w-fit mb-6">
 
-              <PageHeader
-                title="New Inspection"
-                subtitle={
-                  scheduledCapture
-                    ? 'Scheduled inspection is active. The phone camera will capture an image every 5 seconds.'
-                    : 'Capture an image of the solar panel using the phone camera through DroidCam, or upload an image file.'
-                }
-              />
+          <button
+            type="button"
+            onClick={() =>
+              setActiveTab(
+                'inspect'
+              )
+            }
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition ${
+              activeTab ===
+              'inspect'
+                ? 'bg-white text-ink-900 shadow-sm'
+                : 'text-ink-500'
+            }`}
+          >
+
+            <Camera
+              size={15}
+            />
+
+            Inspection
+
+          </button>
+
+
+          <button
+            type="button"
+            onClick={() =>
+              setActiveTab(
+                'history'
+              )
+            }
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition ${
+              activeTab ===
+              'history'
+                ? 'bg-white text-ink-900 shadow-sm'
+                : 'text-ink-500'
+            }`}
+          >
+
+            <History
+              size={15}
+            />
+
+            History
+
+            {inspectionHistory.length >
+              0 && (
+
+              <span className="px-1.5 py-0.5 rounded-full bg-ink-100 text-xs">
+
+                {inspectionHistory.length}
+
+              </span>
+
+            )}
+
+          </button>
+
+        </div>
+
+
+        {/* ====================================================
+            INSPECTION TAB
+            ==================================================== */}
+
+        {activeTab ===
+          'inspect' && (
+
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+
+            {/* Camera */}
+
+            <section className="bg-white border border-ink-200/60 rounded-2xl p-6">
+
+              <div className="mb-5">
+
+                <h2 className="text-base font-semibold">
+
+                  Panel Inspection
+
+                </h2>
+
+
+                <p className="text-xs text-ink-400 mt-1">
+
+                  {selectedPanel?.name}
+                  {' • '}
+                  {selectedPanel?.location}
+
+                </p>
+
+              </div>
 
 
               <CameraCapture
-
                 panelId={
-                  panelId
+                  selectedPanel?.id ??
+                  selectedPanelId
                 }
 
                 scheduledCapture={
@@ -1105,105 +1225,313 @@ export default function App() {
                 onInspectionComplete={
                   handleInspectionComplete
                 }
-
               />
+
+            </section>
+
+
+            {/* Result */}
+
+            <section className="bg-white border border-ink-200/60 rounded-2xl p-6">
+
+              <div className="mb-5">
+
+                <h2 className="text-base font-semibold">
+
+                  Inspection Analysis
+
+                </h2>
+
+
+                <p className="text-xs text-ink-400 mt-1">
+
+                  MobileNetV3 + Grad-CAM + Weather
+
+                </p>
+
+              </div>
+
+
+              {currentInspection ? (
+
+                <InspectionDetails
+                  inspectionId={
+                    currentInspection.id
+                  }
+                  onBack={
+                    () => setCurrentInspection(null)
+                  }
+                />
+
+              ) : (
+
+                <div className="flex flex-col items-center justify-center min-h-[400px] text-center">
+
+                  <div className="w-14 h-14 rounded-full bg-ink-100 flex items-center justify-center">
+
+                    <PanelTop
+                      size={24}
+                      className="text-ink-400"
+                    />
+
+                  </div>
+
+
+                  <p className="mt-4 text-sm font-medium text-ink-700">
+
+                    No inspection result yet
+
+                  </p>
+
+
+                  <p className="mt-2 text-xs text-ink-400 max-w-xs">
+
+                    Capture a solar panel image
+                    using the phone camera or wait
+                    for the scheduled inspection.
+
+                  </p>
+
+                </div>
+
+              )}
+
+            </section>
+
+          </div>
+
+        )}
+
+
+        {/* ====================================================
+            HISTORY TAB
+            ==================================================== */}
+
+        {activeTab ===
+          'history' && (
+
+          <section className="bg-white border border-ink-200/60 rounded-2xl overflow-hidden">
+
+            <div className="px-6 py-5 border-b border-ink-100 flex items-center justify-between">
+
+              <div>
+
+                <h2 className="text-base font-semibold">
+
+                  Inspection History
+
+                </h2>
+
+
+                <p className="text-xs text-ink-400 mt-1">
+
+                  Previous solar panel inspections
+
+                </p>
+
+              </div>
+
+
+              {inspectionHistory.length >
+                0 && (
+
+                <button
+                  type="button"
+                  onClick={
+                    clearHistory
+                  }
+                  className="flex items-center gap-2 px-3 py-2 text-xs text-red-600 border border-red-200 rounded-lg hover:bg-red-50"
+                >
+
+                  <Trash2
+                    size={14}
+                  />
+
+                  Clear History
+
+                </button>
+
+              )}
 
             </div>
 
-          )}
+
+            {inspectionHistory.length ===
+            0 ? (
+
+              <div className="py-20 text-center">
+
+                <History
+                  size={28}
+                  className="mx-auto text-ink-300"
+                />
 
 
-          {/* ==================================================
-              HISTORY
-              ================================================== */}
+                <p className="mt-4 text-sm font-medium text-ink-600">
 
-          {view === 'history' && (
+                  No inspections yet
 
-            <div className="space-y-8">
-
-              <PageHeader
-                title="Inspection History"
-                subtitle="Complete record of all past inspections with AI predictions and fault analysis."
-              />
+                </p>
 
 
-              <InspectionHistory
-                panelId={
-                  panelId
-                }
-                onSelectInspection={
-                  handleSelectInspection
-                }
-                refreshKey={
-                  refreshKey
-                }
-              />
+                <p className="mt-1 text-xs text-ink-400">
 
-            </div>
+                  Completed inspections will appear here.
 
-          )}
+                </p>
+
+              </div>
+
+            ) : (
+
+              <div className="divide-y divide-ink-100">
+
+                {inspectionHistory.map(
+                  (
+                    inspection,
+                    index
+                  ) => (
+
+                    <div
+                      key={
+                        inspection.id ??
+                        `${inspection.panel_id}-${index}`
+                      }
+                      className="px-6 py-5 flex items-center justify-between gap-4"
+                    >
+
+                      <div className="min-w-0">
+
+                        <div className="flex items-center gap-2">
+
+                          <p className="text-sm font-medium text-ink-800">
+
+                            {inspection.panel_id}
+
+                          </p>
 
 
-          {/* ==================================================
-              DETAILS
-              ================================================== */}
+                          {inspection.is_fault ? (
 
-          {view === 'details' &&
-            selectedInspectionId && (
+                            <span className="px-2 py-0.5 rounded-full bg-red-50 text-red-700 text-[10px] font-medium">
 
-              <InspectionDetails
-                inspectionId={
-                  selectedInspectionId
-                }
-                onBack={() =>
-                  navigate(
-                    'history'
+                              Fault
+
+                            </span>
+
+                          ) : (
+
+                            <span className="px-2 py-0.5 rounded-full bg-green-50 text-green-700 text-[10px] font-medium">
+
+                              Normal
+
+                            </span>
+
+                          )}
+
+                        </div>
+
+
+                        <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1.5 text-xs text-ink-400">
+
+                          <span>
+
+                            {inspection.prediction ??
+                              'Unknown'}
+
+                          </span>
+
+
+                          {inspection.confidence !=
+                            null && (
+
+                            <span>
+
+                              Confidence:
+
+                              {' '}
+
+                              {(
+                                inspection.confidence *
+                                100
+                              ).toFixed(1)}
+
+                              %
+
+                            </span>
+
+                          )}
+
+
+                          <span>
+
+                            {inspection.processing_status}
+
+                          </span>
+
+                        </div>
+
+                      </div>
+
+
+                      <div className="flex items-center gap-2">
+
+                        <button
+                          type="button"
+                          onClick={() => {
+
+                            setCurrentInspection(
+                              inspection
+                            );
+
+                            setActiveTab(
+                              'inspect'
+                            );
+
+                          }}
+                          className="flex items-center gap-2 px-3 py-2 text-xs font-medium border border-ink-200 rounded-lg hover:bg-ink-50"
+                        >
+
+                          <CheckCircle2
+                            size={13}
+                          />
+
+                          View
+
+                        </button>
+
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            deleteInspection(
+                              index
+                            )
+                          }
+                          className="p-2 text-ink-400 hover:text-red-600"
+                          title="Delete inspection"
+                        >
+
+                          <Trash2
+                            size={14}
+                          />
+
+                        </button>
+
+                      </div>
+
+                    </div>
+
                   )
-                }
-              />
+                )}
+
+              </div>
 
             )}
 
+          </section>
 
-          {/* ==================================================
-              SCHEDULE
-              ================================================== */}
-
-          {view === 'schedule' && (
-
-            <div className="space-y-8">
-
-              <PageHeader
-                title="Inspection Schedule"
-                subtitle="Configure when automatic inspections run and which camera to use."
-              />
-
-
-              <ScheduleSettings
-                panelId={
-                  panelId
-                }
-              />
-
-
-              <NotificationStatus />
-
-            </div>
-
-          )}
-
-
-          {/* ==================================================
-              ABOUT
-              ================================================== */}
-
-          {view === 'about' && (
-
-            <AboutPage />
-
-          )}
-
-        </div>
+        )}
 
       </main>
 
@@ -1212,321 +1540,26 @@ export default function App() {
           FOOTER
           ====================================================== */}
 
-      <footer className="border-t border-ink-200/60 mt-16">
+      <footer className="max-w-7xl mx-auto px-6 pb-8">
 
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        <div className="pt-5 border-t border-ink-200 text-xs text-ink-400 flex flex-wrap items-center justify-between gap-3">
 
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-2">
+          <span>
 
-            <div className="flex items-center gap-2 text-xs text-ink-400">
+            SolarAI • MobileNetV3 Small
 
-              <Sun
-                size={12}
-                className="text-amber-400"
-              />
-
-              <span>
-
-                SolarGuard — AI-Based Fault Detection System for Solar Panels
-
-              </span>
-
-            </div>
+          </span>
 
 
-            <p className="text-xs text-ink-400">
+          <span>
 
-              Final Year Project
+            Grad-CAM Explainable AI
 
-            </p>
-
-          </div>
+          </span>
 
         </div>
 
       </footer>
-
-    </div>
-
-  );
-
-}
-
-
-// ============================================================
-// PAGE HEADER
-// ============================================================
-
-function PageHeader({
-  title,
-  subtitle,
-}: {
-  title: string;
-  subtitle: string;
-}) {
-
-  return (
-
-    <div className="animate-fade-in-up">
-
-      <h2 className="text-2xl font-semibold tracking-tight text-ink-900">
-
-        {title}
-
-      </h2>
-
-
-      <p className="mt-1.5 text-sm text-ink-500">
-
-        {subtitle}
-
-      </p>
-
-    </div>
-
-  );
-
-}
-
-
-// ============================================================
-// ABOUT PAGE
-// ============================================================
-
-function AboutPage() {
-
-  return (
-
-    <div className="max-w-3xl mx-auto space-y-10">
-
-      <PageHeader
-        title="About This Project"
-        subtitle="Overview of the system, its purpose, and how it works."
-      />
-
-
-      <div className="space-y-6">
-
-
-        {/* ==================================================
-            PROBLEM
-            ================================================== */}
-
-        <section className="animate-fade-in-up">
-
-          <h3 className="text-base font-semibold text-ink-900 mb-2">
-
-            Problem Statement
-
-          </h3>
-
-
-          <p className="text-sm leading-relaxed text-ink-600">
-
-            Solar panels are exposed to environmental
-            conditions that can cause physical degradation
-            over time. Faults such as microcracks, hotspots,
-            dust accumulation, and broken cells reduce
-            energy output and can lead to permanent damage
-            if left unaddressed. Manual inspection of solar
-            installations is slow, costly, and difficult to
-            perform regularly, especially for large-scale or
-            elevated installations.
-
-          </p>
-
-        </section>
-
-
-        {/* ==================================================
-            HOW IT WORKS
-            ================================================== */}
-
-        <section>
-
-          <h3 className="text-base font-semibold text-ink-900 mb-3">
-
-            How It Works
-
-          </h3>
-
-
-          <ol className="space-y-2.5">
-
-            {[
-              'The phone camera is connected to the computer using DroidCam.',
-              'The SolarGuard application receives the camera stream through the browser.',
-              'The application waits for the configured inspection schedule.',
-              'At the scheduled time, automatic capture is enabled.',
-              'The captured image is sent to the AI inference service.',
-              'The MobileNetV3 model analyzes the solar panel image.',
-              'The prediction and confidence score are returned.',
-              'The inspection result is stored and displayed in the dashboard and history.',
-              'If a fault is detected, a notification can be generated.',
-            ].map(
-              (
-                step,
-                index
-              ) => (
-
-                <li
-                  key={index}
-                  className="flex items-start gap-3 text-sm text-ink-600"
-                >
-
-                  <span className="flex-shrink-0 w-6 h-6 rounded-full bg-ink-900 text-white text-xs font-medium flex items-center justify-center">
-
-                    {index + 1}
-
-                  </span>
-
-
-                  <span className="pt-0.5">
-
-                    {step}
-
-                  </span>
-
-                </li>
-
-              )
-            )}
-
-          </ol>
-
-        </section>
-
-
-        {/* ==================================================
-            ARCHITECTURE
-            ================================================== */}
-
-        <section>
-
-          <h3 className="text-base font-semibold text-ink-900 mb-2">
-
-            Architecture
-
-          </h3>
-
-
-          <div className="bg-ink-950 rounded-xl p-5 font-mono text-xs text-ink-300 overflow-x-auto">
-
-            Phone Camera → DroidCam → Browser → React Frontend → Inspection API → MobileNetV3 ML Service → Prediction → Database → Dashboard / Notification
-
-          </div>
-
-        </section>
-
-
-        {/* ==================================================
-            SCHEDULE
-            ================================================== */}
-
-        <section>
-
-          <h3 className="text-base font-semibold text-ink-900 mb-2">
-
-            Scheduled Inspection
-
-          </h3>
-
-
-          <p className="text-sm leading-relaxed text-ink-600">
-
-            The scheduling module checks the configured
-            inspection time every few seconds. When the
-            selected day and exact scheduled hour and minute
-            are reached, the application activates scheduled
-            capture. The camera can remain connected and
-            images are captured every five seconds through
-            the CameraCapture component.
-
-          </p>
-
-        </section>
-
-
-        {/* ==================================================
-            MODEL
-            ================================================== */}
-
-        <section>
-
-          <h3 className="text-base font-semibold text-ink-900 mb-2">
-
-            Model Integration
-
-          </h3>
-
-
-          <p className="text-sm leading-relaxed text-ink-600">
-
-            The frontend communicates with the existing
-            inspection and model services. The current
-            project uses MobileNetV3 Small as the lightweight
-            image classification model.
-
-          </p>
-
-        </section>
-
-
-        {/* ==================================================
-            FEATURES
-            ================================================== */}
-
-        <section>
-
-          <h3 className="text-base font-semibold text-ink-900 mb-3">
-
-            Key Features
-
-          </h3>
-
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-
-            {[
-              'DroidCam phone camera integration',
-              'Live camera preview',
-              'Manual image capture',
-              'Scheduled automatic inspection',
-              '5-second automatic capture interval',
-              'AI-powered fault detection',
-              'MobileNetV3 Small model',
-              'Inspection history',
-              'Dashboard statistics',
-              'Weather information',
-              'GPS information',
-              'Cleaning recommendation',
-              'Grad-CAM explainability',
-              'Fault notifications',
-              'Image upload fallback',
-            ].map(
-              (
-                feature
-              ) => (
-
-                <div
-                  key={feature}
-                  className="flex items-center gap-2.5 text-sm text-ink-600"
-                >
-
-                  <div className="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0" />
-
-                  {feature}
-
-                </div>
-
-              )
-            )}
-
-          </div>
-
-        </section>
-
-      </div>
 
     </div>
 
