@@ -897,29 +897,16 @@ export function CameraCapture({
               }
 
 
-              // ------------------------------------------------
-              // Result
-              // ------------------------------------------------
-
-              setResult(
-                inspection
-              );
-
-
-              setPhase(
-                'success'
-              );
-
-
-              setAutomaticCaptureCount(
-                (count) =>
-                  count + 1
-              );
-
-
-              setCaptureStatus(
-                'Scheduled inspection completed. Next capture in 5 seconds.'
-              );
+              if (inspection.processing_status === 'failed') {
+                setError(inspection.error_message ?? 'AI inference failed.');
+                setPhase('error');
+                setCaptureStatus('Scheduled inspection failed. Automatic capture will continue.');
+              } else {
+                setResult(inspection);
+                setPhase('success');
+                setAutomaticCaptureCount((count) => count + 1);
+                setCaptureStatus('Scheduled inspection completed. Next capture in 5 seconds.');
+              }
 
 
               onInspectionComplete(
@@ -1365,19 +1352,15 @@ export function CameraCapture({
         }
 
 
-        setResult(
-          inspection
-        );
-
-
-        setPhase(
-          'success'
-        );
-
-
-        setCaptureStatus(
-          'Inspection completed.'
-        );
+        if (inspection.processing_status === 'failed') {
+          setError(inspection.error_message ?? 'AI inference failed.');
+          setPhase('error');
+          setCaptureStatus('Inspection failed.');
+        } else {
+          setResult(inspection);
+          setPhase('success');
+          setCaptureStatus('Inspection completed.');
+        }
 
 
         onInspectionComplete(
@@ -2134,9 +2117,7 @@ export function CameraCapture({
 
                   <p className="text-sm font-medium text-ink-900">
 
-                    {result.prediction ||
-                      result.fault_type ||
-                      'Unknown'}
+                    {result.prediction ?? 'Prediction unavailable'}
 
                   </p>
 
@@ -2211,7 +2192,7 @@ export function CameraCapture({
                                 weather?: WeatherSnapshot;
                               }
                             ).weather
-                              ?.temperature
+                              ?.temperature_c
                           }
                           °C
 
@@ -2236,7 +2217,7 @@ export function CameraCapture({
                                 weather?: WeatherSnapshot;
                               }
                             ).weather
-                              ?.precipitation
+                              ?.precipitation_mm
                           }
                           mm
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import os
 import base64
+import threading
 from pathlib import Path
 
 import numpy as np
@@ -12,6 +13,7 @@ import torch
 from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image, UnidentifiedImageError
+from starlette.concurrency import run_in_threadpool
 from torch import nn
 from torchvision import transforms
 
@@ -31,7 +33,10 @@ FAULT_CLASSES = {"Bird-drop", "Dusty", "Electrical-damage", "Physical-Damage", "
 app = FastAPI(title="Solar Panel Classifier")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:5173").split(","),
+    allow_origins=os.getenv(
+        "CORS_ORIGINS",
+        "http://localhost:5173,http://127.0.0.1:5173",
+    ).split(","),
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
@@ -42,6 +47,7 @@ transform: transforms.Compose | None = None
 device = torch.device("cpu")
 camera_publisher: WebSocket | None = None
 camera_viewers: set[WebSocket] = set()
+inference_lock = threading.Lock()
 
 
 def camera_stream_token_is_valid(token: str) -> bool:
@@ -55,6 +61,27 @@ def load_model() -> None:
         raise RuntimeError(f"Model checkpoint not found at {MODEL_PATH.resolve()}. Run train.py first.")
     model, classes, image_size, _checkpoint = load_solarai_model(MODEL_PATH, device=device)
     transform = get_preprocess_transform(image_size)
+
+
+def run_model_inference(
+    image_tensor: torch.Tensor,
+    photo: Image.Image,
+) -> tuple[int, float, torch.Tensor, str | None, str | None]:
+    if model is None:
+        raise RuntimeError("Model is not loaded")
+
+    with inference_lock:
+        class_index, confidence, probabilities = run_prediction(model, image_tensor)
+        try:
+            target_layer = get_gradcam_target_layer(model)
+            gradcam = GradCAM(model, target_layer)
+            try:
+                heatmap = gradcam.generate(image_tensor, class_index)
+            finally:
+                gradcam.close()
+            return class_index, confidence, probabilities, create_gradcam_data_url(photo, heatmap), None
+        except Exception as error:
+            return class_index, confidence, probabilities, None, f"Grad-CAM generation failed: {error}"
 
 
 @app.on_event("startup")
@@ -78,7 +105,11 @@ async def predict(image: UploadFile = File(...)) -> dict[str, object]:
     except UnidentifiedImageError as error:
         raise HTTPException(status_code=400, detail="Invalid image file") from error
     image_tensor = transform(photo).unsqueeze(0).to(device)
-    class_index, confidence, probabilities = run_prediction(model, image_tensor)
+    class_index, confidence, probabilities, gradcam_image, gradcam_error = await run_in_threadpool(
+        run_model_inference,
+        image_tensor,
+        photo,
+    )
     predictions = [
         {"class": label, "confidence": round(float(probabilities[index]), 6)}
         for index, label in enumerate(classes)
@@ -90,19 +121,10 @@ async def predict(image: UploadFile = File(...)) -> dict[str, object]:
         "confidence": round(confidence, 6),
         "is_fault": predicted_class in FAULT_CLASSES,
         "all_classes": predictions,
+        "gradcam_image": gradcam_image,
     }
-
-    try:
-        target_layer = get_gradcam_target_layer(model)
-        gradcam = GradCAM(model, target_layer)
-        try:
-            heatmap = gradcam.generate(image_tensor, class_index)
-        finally:
-            gradcam.close()
-        result["gradcam_image"] = create_gradcam_data_url(photo, heatmap)
-    except Exception as error:
-        result["gradcam_image"] = None
-        result["gradcam_error"] = f"Grad-CAM generation failed: {error}"
+    if gradcam_error:
+        result["gradcam_error"] = gradcam_error
 
     return result
 

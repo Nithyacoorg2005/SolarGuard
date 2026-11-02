@@ -13,6 +13,7 @@ interface OpenMeteoResponse {
 }
 
 const OPEN_METEO_FORECAST_URL = 'https://api.open-meteo.com/v1/forecast';
+const WEATHER_REQUEST_TIMEOUT_MS = 5_000;
 
 export async function getInspectionWeather(): Promise<WeatherSnapshot> {
   const capturedAt = new Date().toISOString();
@@ -60,7 +61,7 @@ function getBrowserCoordinates(): Promise<BrowserCoordinates> {
       },
       {
         enableHighAccuracy: true,
-        timeout: 10000,
+        timeout: WEATHER_REQUEST_TIMEOUT_MS,
         maximumAge: 5 * 60 * 1000,
       }
     );
@@ -91,10 +92,19 @@ async function fetchOpenMeteoWeather(
   });
 
   let response: Response;
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), WEATHER_REQUEST_TIMEOUT_MS);
   try {
-    response = await fetch(`${OPEN_METEO_FORECAST_URL}?${params.toString()}`);
+    response = await fetch(`${OPEN_METEO_FORECAST_URL}?${params.toString()}`, {
+      signal: controller.signal,
+    });
   } catch (err) {
-    throw new Error(`Cannot reach Open-Meteo weather API. ${err instanceof Error ? err.message : 'Network error.'}`);
+    const reason = err instanceof Error && err.name === 'AbortError'
+      ? 'Weather request timed out.'
+      : `Cannot reach Open-Meteo weather API. ${err instanceof Error ? err.message : 'Network error.'}`;
+    throw new Error(reason);
+  } finally {
+    window.clearTimeout(timeout);
   }
 
   if (!response.ok) {

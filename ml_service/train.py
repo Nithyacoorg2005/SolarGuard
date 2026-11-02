@@ -14,7 +14,7 @@ from torchvision import datasets, models, transforms
 IMAGE_SIZE = 224
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent
-DEFAULT_DATA_DIR = PROJECT_ROOT / "cleaned_dataset"
+DEFAULT_DATA_DIR = PROJECT_ROOT / "Faulty_solar_panel"
 DEFAULT_OUTPUT = SCRIPT_DIR / "models" / "solar_panel_mobilenetv3.pth"
 
 

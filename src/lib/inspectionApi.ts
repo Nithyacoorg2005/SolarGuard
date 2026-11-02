@@ -153,14 +153,13 @@ export async function runInspection(
   // Step 3: Mark as processing
   await updateInspection(inspection.id, { processing_status: 'processing' });
 
-  // Step 4: Capture weather context before AI inference
-  const weather = await getInspectionWeather();
-
-  // Step 5: Run model inference
+  // Weather is optional context; don't let its lookup delay starting inference.
+  const weatherPromise = getInspectionWeather();
   let prediction: ModelPrediction;
   try {
-    prediction = await runInference(imageBlob, weather);
+    prediction = await runInference(imageBlob);
   } catch (err) {
+    const weather = await weatherPromise;
     const errorMsg = err instanceof Error ? err.message : 'Unknown inference error';
     const updated = await updateInspection(inspection.id, {
       processing_status: 'failed',
@@ -173,6 +172,7 @@ export async function runInspection(
     return updated;
   }
 
+  const weather = await weatherPromise;
   const cleaningDecision = decideCleaning(prediction, weather);
 
   // Step 6: Update record with prediction
