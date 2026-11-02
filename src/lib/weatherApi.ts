@@ -10,6 +10,7 @@ interface OpenMeteoResponse {
   longitude?: number;
   current?: Record<string, number | string | null | undefined>;
   hourly?: Record<string, (number | string | null)[] | undefined>;
+  daily?: Record<string, (number | string | null)[] | undefined>;
 }
 
 const OPEN_METEO_FORECAST_URL = 'https://api.open-meteo.com/v1/forecast';
@@ -38,6 +39,7 @@ export async function getInspectionWeather(): Promise<WeatherSnapshot> {
       cloud_cover_pct: null,
       forecast_24h_precipitation_mm: null,
       forecast_24h_precipitation_probability_max_pct: null,
+      sunrise_at: null,
       error: err instanceof Error ? err.message : 'Weather lookup failed.',
     };
   }
@@ -87,6 +89,7 @@ async function fetchOpenMeteoWeather(
       'wind_gusts_10m',
     ].join(','),
     hourly: 'precipitation,precipitation_probability',
+    daily: 'sunrise',
     forecast_days: '2',
     timezone: 'auto',
   });
@@ -118,6 +121,7 @@ async function fetchOpenMeteoWeather(
 
   const current = data.current ?? {};
   const hourly = data.hourly ?? {};
+  const sunriseAt = findNextSunrise(data.daily?.sunrise);
   const next24Precipitation = sumFirstNumbers(hourly.precipitation, 24);
   const next24Probability = maxFirstNumbers(hourly.precipitation_probability, 24);
 
@@ -137,7 +141,19 @@ async function fetchOpenMeteoWeather(
     cloud_cover_pct: readNumber(current.cloud_cover),
     forecast_24h_precipitation_mm: next24Precipitation,
     forecast_24h_precipitation_probability_max_pct: next24Probability,
+    sunrise_at: sunriseAt,
   };
+}
+
+function findNextSunrise(values: unknown): string | null {
+  if (!Array.isArray(values)) return null;
+  const now = Date.now();
+  const nextSunrise = values
+    .filter((value): value is string => typeof value === 'string')
+    .map((value) => ({ value, time: Date.parse(value) }))
+    .filter((entry) => Number.isFinite(entry.time) && entry.time > now)
+    .sort((left, right) => left.time - right.time)[0];
+  return nextSunrise?.value ?? null;
 }
 
 function readNumber(value: unknown): number | null {

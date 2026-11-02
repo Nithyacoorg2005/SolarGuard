@@ -38,6 +38,7 @@ import {
   FaultBadge,
   ConfidenceBar,
 } from './StatusBadges';
+import { HardwareSimulation } from './HardwareSimulation';
 
 
 // ============================================================
@@ -1562,6 +1563,9 @@ export function CameraCapture({
   // UI
   // ==========================================================
 
+  const cleaningDecision = result?.raw_output?.cleaning_decision as CleaningDecision | undefined;
+  const inspectionWeather = result?.raw_output?.weather as WeatherSnapshot | undefined;
+
   return (
 
     <div className="max-w-2xl mx-auto">
@@ -2293,6 +2297,16 @@ export function CameraCapture({
 
             </div>
 
+
+            {result.processing_status === 'completed' &&
+              result.prediction &&
+              cleaningDecision && (
+                <HardwareSimulation
+                  prediction={result.prediction}
+                  decision={cleaningDecision}
+                  weather={inspectionWeather ?? null}
+                />
+              )}
 
             {/* ACTIONS */}
 

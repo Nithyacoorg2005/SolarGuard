@@ -63,6 +63,7 @@ export interface WeatherSnapshot {
   cloud_cover_pct: number | null;
   forecast_24h_precipitation_mm: number | null;
   forecast_24h_precipitation_probability_max_pct: number | null;
+  sunrise_at?: string | null;
   error?: string;
 }
 

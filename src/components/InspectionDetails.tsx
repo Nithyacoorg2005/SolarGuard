@@ -4,6 +4,7 @@ import { getInspectionById, formatDateTime, formatDate, formatTime, runInspectio
 import { ensureNotificationPermission, sendFaultNotification } from '@/lib/notificationService';
 import type { CleaningDecision, Inspection, WeatherSnapshot } from '@/types';
 import { FaultBadge, StatusBadge, NotificationBadge, ConfidenceBar, Spinner } from './StatusBadges';
+import { HardwareSimulation } from './HardwareSimulation';
 
 interface InspectionDetailsProps {
   inspectionId: string;
@@ -233,6 +234,10 @@ export function InspectionDetails({ inspectionId, onBack }: InspectionDetailsPro
             )}
           </div>
         </div>
+      )}
+
+      {inspection.processing_status === 'completed' && inspection.prediction && cleaningDecision && (
+        <HardwareSimulation prediction={inspection.prediction} decision={cleaningDecision} weather={weather ?? null} />
       )}
 
       {/* All classes */}
