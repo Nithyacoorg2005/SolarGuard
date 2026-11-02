@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { ArrowLeft, Calendar, Clock, ImageOff, Cpu, Bell, MapPin, AlertCircle, CloudSun, Droplets, Wind, ScanSearch, Play } from 'lucide-react';
 import { getInspectionById, formatDateTime, formatDate, formatTime, runInspection } from '@/lib/inspectionApi';
-import { ensureNotificationPermission, sendFaultNotification } from '@/lib/notificationService';
+import { sendFaultNotification } from '@/lib/notificationService';
+import { getGradcamError, getGradcamImage } from '@/lib/gradcam';
 import type { CleaningDecision, Inspection, WeatherSnapshot } from '@/types';
 import { FaultBadge, StatusBadge, NotificationBadge, ConfidenceBar, Spinner } from './StatusBadges';
 import { HardwareSimulation } from './HardwareSimulation';
@@ -42,7 +43,6 @@ export function InspectionDetails({ inspectionId, onBack }: InspectionDetailsPro
     setError(null);
     try {
       const imageBlob = await (await fetch(inspection.image_path)).blob();
-      await ensureNotificationPermission();
       const updated = await runInspection(inspection.panel_id, imageBlob, inspection.trigger_type, inspection.id);
       if (updated.is_fault && updated.processing_status === 'completed') {
         await sendFaultNotification(updated);
@@ -79,8 +79,8 @@ export function InspectionDetails({ inspectionId, onBack }: InspectionDetailsPro
   const rawClasses = inspection.raw_output?.all_classes as { class: string; confidence: number }[] | undefined;
   const weather = inspection.raw_output?.weather as WeatherSnapshot | undefined;
   const cleaningDecision = inspection.raw_output?.cleaning_decision as CleaningDecision | undefined;
-  const gradcamImage = inspection.raw_output?.gradcam_image as string | undefined;
-  const gradcamError = inspection.raw_output?.gradcam_error as string | undefined;
+  const gradcamImage = getGradcamImage(inspection.raw_output);
+  const gradcamError = getGradcamError(inspection.raw_output);
 
   return (
     <div className="space-y-8 max-w-3xl mx-auto animate-fade-in">
@@ -122,7 +122,7 @@ export function InspectionDetails({ inspectionId, onBack }: InspectionDetailsPro
         </div>
       </div>
 
-      {(gradcamImage || gradcamError) && (
+      {(inspection.processing_status === 'completed' || gradcamImage || gradcamError) && (
         <div className="bg-white rounded-2xl border border-ink-200/60 overflow-hidden">
           <div className="px-6 py-4 border-b border-ink-100">
             <h3 className="text-sm font-semibold text-ink-700 flex items-center gap-1.5">
@@ -135,7 +135,7 @@ export function InspectionDetails({ inspectionId, onBack }: InspectionDetailsPro
             </div>
           ) : (
             <div className="px-6 py-5 text-sm text-amber-700 bg-amber-50">
-              {gradcamError ?? 'Grad-CAM heatmap could not be generated for this image.'}
+              {gradcamError ?? 'Grad-CAM heatmap was not included in the saved inspection result.'}
             </div>
           )}
           {gradcamImage && gradcamError && (

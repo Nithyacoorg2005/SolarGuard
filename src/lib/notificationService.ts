@@ -16,17 +16,21 @@ import { formatDateTime } from './inspectionApi';
  *   VITE_NOTIFICATION_WEBHOOK_URL  — webhook URL for server-side notifications
  */
 
-let permissionRequested = false;
+let permissionRequest: Promise<boolean> | null = null;
 
 export async function ensureNotificationPermission(): Promise<boolean> {
   if (!('Notification' in window)) return false;
   if (Notification.permission === 'granted') return true;
   if (Notification.permission === 'denied') return false;
-  if (permissionRequested) return false;
+  if (permissionRequest) return permissionRequest;
 
-  permissionRequested = true;
-  const result = await Notification.requestPermission();
-  return result === 'granted';
+  permissionRequest = Notification.requestPermission()
+    .then((result) => result === 'granted')
+    .finally(() => {
+      permissionRequest = null;
+    });
+
+  return permissionRequest;
 }
 
 export function getNotificationPermission(): 'default' | 'granted' | 'denied' | 'unsupported' {

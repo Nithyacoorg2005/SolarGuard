@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Calendar, Download, ImageOff } from 'lucide-react';
 import { getInspectionHistory, formatDateTime } from '@/lib/inspectionApi';
+import { getGradcamImage } from '@/lib/gradcam';
 import type { Inspection, WeatherSnapshot } from '@/types';
 import { FaultBadge, StatusBadge, Spinner, EmptyState } from './StatusBadges';
 
@@ -138,9 +139,7 @@ function formatTimeShort(iso: string): string {
 
 function downloadInspectionReport(inspection: Inspection): void {
   const reportDate = formatDateTime(inspection.inspection_at);
-  const gradcamImage = typeof inspection.raw_output?.gradcam_image === 'string'
-    ? inspection.raw_output.gradcam_image
-    : null;
+  const gradcamImage = getGradcamImage(inspection.raw_output);
   const weather = inspection.raw_output?.weather as WeatherSnapshot | undefined;
   const report = `<!doctype html>
 <html lang="en">

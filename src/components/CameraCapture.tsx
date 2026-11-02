@@ -19,9 +19,9 @@ import {
 } from 'lucide-react';
 
 import { runInspection } from '@/lib/inspectionApi';
+import { getGradcamError, getGradcamImage } from '@/lib/gradcam';
 
 import {
-  ensureNotificationPermission,
   sendFaultNotification,
 } from '@/lib/notificationService';
 
@@ -870,9 +870,6 @@ export function CameraCapture({
 
             try {
 
-              await ensureNotificationPermission();
-
-
               const inspection =
                 await runInspection(
                   panelId,
@@ -1329,9 +1326,6 @@ export function CameraCapture({
 
       try {
 
-        await ensureNotificationPermission();
-
-
         const inspection =
           await runInspection(
             panelId,
@@ -1565,6 +1559,8 @@ export function CameraCapture({
 
   const cleaningDecision = result?.raw_output?.cleaning_decision as CleaningDecision | undefined;
   const inspectionWeather = result?.raw_output?.weather as WeatherSnapshot | undefined;
+  const gradcamImage = getGradcamImage(result?.raw_output ?? null);
+  const gradcamError = getGradcamError(result?.raw_output ?? null);
 
   return (
 
@@ -2069,6 +2065,57 @@ export function CameraCapture({
                   alt="Inspected solar panel"
                   className="w-full object-contain max-h-[450px]"
                 />
+
+              </div>
+
+            )}
+
+            {(gradcamImage || gradcamError) && (
+
+              <div className="bg-white rounded-2xl border border-ink-200/60 overflow-hidden">
+
+                <div className="px-5 py-4 border-b border-ink-100">
+
+                  <h3 className="text-sm font-semibold text-ink-700 flex items-center gap-2">
+
+                    <ScanSearch size={16} />
+                    AI Explainability - Grad-CAM
+
+                  </h3>
+
+                  <p className="text-xs text-ink-400 mt-1">
+                    Heatmap showing the image regions that influenced the prediction.
+                  </p>
+
+                </div>
+
+                {gradcamImage ? (
+
+                  <div className="bg-ink-950">
+
+                    <img
+                      src={gradcamImage}
+                      alt="Grad-CAM heatmap for the inspected solar panel"
+                      className="w-full object-contain max-h-[500px]"
+                    />
+
+                  </div>
+
+                ) : (
+
+                  <p className="px-5 py-4 text-sm text-amber-700 bg-amber-50">
+                    {gradcamError}
+                  </p>
+
+                )}
+
+                {gradcamImage && gradcamError && (
+
+                  <p className="px-5 py-3 text-xs text-amber-700 bg-amber-50 border-t border-amber-100">
+                    {gradcamError}
+                  </p>
+
+                )}
 
               </div>
 
